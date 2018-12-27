@@ -1,0 +1,516 @@
+---
+title: "Text-Mining on the Bible"
+author: "Vignesh J Muralidharan"
+date: "October 6, 2018"
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(textmineR) ;library(tidyverse) ;library(factoextra)
+library(cluster) ; library(NbClust) ;library(fpc) ; library(wordcloud)
+library(dendroextras) ; library(dendextend) ;library(mclust)
+library(dbscan) ; library(dplyr); library(e1071) ; library(seriation)
+library(arules); library(ggplot2); library(RColorBrewer); library(tm)
+library(DT);library(arulesViz);library(arulesCBA)
+```
+
+
+```{r}
+library(dplyr)
+
+bible<-read.csv("https://raw.githubusercontent.com/vigneshjmurali/Statistical-Predictive-Modelling/master/Datasets/bible_asv.csv")
+dim(bible)
+# CREATING FACTOR VARIABLE FOR VARIABLE BOOKS
+bible_bt=aggregate(Testaments~Books,data=bible,FUN = unique,collapse="" )
+bible_bt$Testaments=as.factor(ifelse(bible_bt$Testaments==bible_bt$Testaments[1],1,2))# Creating levels for books as OT =1 & NT =2
+
+levels(bible$Sections)
+bible_bs=aggregate(Sections~Books, data=bible, FUN = unique, collapse="")
+bible_bs$Sections<-ordered(bible_bs$Sections,levels=c('Apostles','Gospels','History','Law','Paul','Prophets','Wisdom'))
+
+# CREATING FACTOR VARIABLE FOR VARIABLE CHAPTERS
+bible_cht=aggregate(Testaments~Chapters,data=bible,FUN=unique, collapse="")
+bible_cht$Testaments=as.factor(ifelse(bible_cht$Testaments==bible_cht$Testaments[1],1,2))
+
+bible_chs=aggregate(Sections~Chapters,data=bible,FUN=unique,collapse="")
+bible_chs$Sections<-ordered(bible_chs$Sections,levels=c('Apostles','Gospels','History','Law','Paul','Prophets','Wisdom'))
+
+# CREATING FACTOR VARIABLE FOR VARIABLE VERSES
+bible_vt=bible[,c('Testaments','Verses')]
+bible_vt$Testaments=as.factor(ifelse(bible_vt$Testaments==bible_vt$Testaments[1],1,2))
+
+bible_vs=bible[,c('Sections','Verses')]
+bible_vs$Sections<-ordered(bible_vs$Sections,levels=c('Apostles','Gospels','History','Law','Paul','Prophets','Wisdom'))
+
+# CREATING FACTOR VARIABLE FOR VARIABLE TESTAMENTS AND TEXT
+bible_tt=aggregate(Testaments~text,data=bible,FUN=unique,collapse="")
+bible_tt$Testaments=as.factor(ifelse(bible_tt$Testaments==bible_tt$Testaments[1],1,2))# Creating levels for books as OT =1& NT =2
+
+# CREATING FACTOR VARIABLE FOR VARIABLE SECTIONS AND TEXT
+bible_st=aggregate(Sections~text,data=bible,FUN=unique,collapse="")
+```
+
+Collapsing the text of all the verses into the same books and then the same chapters together before performing clustering analsysis
+
+```{r}
+#Collpase text into the same 66 books
+attach(bible)
+text.Book=c()
+for (i in 1:66){
+  text.Book[i]=paste(text[Books==as.character(unique(Books)[i])],collapse="")
+}
+#Collpase text into the same 1189 Chapters 
+text.Chapters=c()
+for (i in 1:1189){
+  text.Chapters[i]=paste(text[Chapters==as.character(unique(Chapters)[i])],collapse = "")
+}
+#View(text.Testaments)
+#bible_testaments=data.frame(Testaments=unique(Testaments),text=text.Testaments)
+bible_books=data.frame(Books=unique(Books),text=text.Book)
+bible_chapters=data.frame(Chapters=unique(Chapters),text=text.Chapters)
+bible_verses=bible 
+dim(bible_books);dim(bible_chapters);dim(bible_verses)
+```
+
+Performing standard text transformations - moving all case to lower, removing numbers, removing punctutation, removing common stopwords, strip whitespace and getting rid of special characters. we will consider n-grams, co-ocurrances, stemming and term document matrix.
+
+```{r}
+my_stopwords1 = c("a", "about", "above", "across", "after", "afterwards", "again", "against", "all", "almost", "alone", "along", "already", "also","although","always","am","among", "amongst", "amoungst", "amount", "an", "and", "another", "any","anyhow","anyone","anything","anyway", "anywhere", "are", "around", "as", "at", "back","be","became", "because","become","becomes", "becoming", "been", "before", "beforehand", "behind", "being", "below", "beside", "besides", "between", "beyond", "bill", "both", "bottom","but", "by", "call", "can", "cannot", "cant", "co", "con", "could", "couldnt", "cry", "de", "describe", "detail", "do", "done", "down", "due", "during", "each", "eg", "eight", "either", "eleven","else", "elsewhere", "empty", "enough", "etc", "even", "ever", "every", "everyone", "everything", "everywhere", "except", "few", "fifteen", "fify", "fill", "find", "fire", "first", "five", "for", "former", "formerly", "forty", "found", "four", "from", "front", "full", "further", "get", "give", "go", "had", "has", "hasnt", "have", "he", "hence", "her", "here", "hereafter", "hereby", "herein", "hereupon", "hers", "herself", "him", "himself", "his", "how", "however", "hundred", "ie", "if", "in", "inc", "indeed", "interest", "into", "is", "it", "its", "itself", "keep", "last", "latter", "latterly", "least", "less", "ltd", "made", "many", "may", "me", "meanwhile", "might", "mill", "mine", "more", "moreover", "most", "mostly", "move", "much", "must", "my", "myself", "name", "namely", "neither", "never", "nevertheless", "next", "nine", "no", "nobody", "none", "noone", "nor", "not", "nothing", "now", "nowhere", "of", "off", "often", "on", "once", "one", "only", "onto", "or", "other", "others", "otherwise", "our", "ours", "ourselves", "out", "over", "own","part", "per", "perhaps", "please", "put", "rather", "re", "same", "see", "seem", "seemed", "seeming", "seems", "serious", "several", "she", "should", "show", "side", "since", "sincere", "six", "sixty", "so", "some", "somehow", "someone", "something", "sometime", "sometimes", "somewhere", "still", "such", "system", "take", "ten", "than", "that", "the", "their", "them", "themselves", "then", "thence", "there", "thereafter", "thereby", "therefore", "therein", "thereupon", "these", "they", "thickv", "thin", "third", "this", "those", "though", "three", "through", "throughout", "thru", "thus", "to", "together", "too", "top", "toward", "towards", "twelve", "twenty", "two", "un", "under", "until", "up", "upon", "us", "very", "via", "was", "we", "well", "were", "what", "whatever", "when", "whence", "whenever", "where", "whereafter", "whereas", "whereby", "wherein", "whereupon", "wherever", "whether", "which", "while", "whither", "who", "whoever", "whole", "whom", "whose", "why", "will", "with", "within", "without", "would", "yet", "you", "your", "yours", "yourself", "yourselves", "the")
+
+my_stopwords2 = c('thou','thee','thy','ye','shall','shalt','lo','unto','hath','thereof','hast', 'set','thine','art','yea','midst','wherefore','wilt','thyself')
+
+#Canonical Groupings of the Bible
+Testaments=c(rep('OT',39),rep('NT',27))
+Sections=c(rep('Law',5),  rep('History',12),rep('Wisdom',5),rep('Prophets',17),rep('Gospels',5),rep('Paul',13),rep("Apostles",9))
+bible_new =data.frame(Books=unique(Books),Testaments=as.factor(c(rep("OT",39),rep("NT",27))), 
+                     Sections=as.factor(c(rep("Law",5),rep("History",12),rep("Wisdom",5),rep("Prophets",17),rep("Gospels",5),rep("Paul",13),rep("Apostles",9))),
+                     text=text.Book)
+```
+
+#**CLUSTERING ON THE TEXT OF 66 BOOKS**
+Turning the sentences to document term matrix (DTM)
+
+```{r}
+dtm_b <- CreateDtm(bible_books$text,doc_names = bible_books$Books,ngram_window = c(1, 7),
+                   stopword_vec = c(tm::stopwords("english"),tm::stopwords("SMART"),
+                                    my_stopwords1, my_stopwords2),
+#stem_lemma_function = function(x) SnowballC::wordStem(x, "porter"),
+lower = TRUE, remove_punctuation = TRUE, remove_numbers = FALSE)
+# explore basic frequencies & acurate vocabulary
+tf <- TermDocFreq(dtm_b)
+# Keep only words appearing more than 2 times, AND in more than 1 document
+vocabulary <- tf$term[tf$term_freq>2 & tf$doc_freq>1]
+dtm_b <- dtm_b[ , vocabulary]
+
+## Use term raw Frequency counts
+## Calculating document-to-document COSINE SIMILARITY (scalar product)
+csim_b <- dtm_b / sqrt(rowSums(dtm_b*dtm_b))
+csim_b <- csim_b %*% t(csim_b) 
+
+# Turn that cosine similarity matrix into a distance matrix
+dist.mtx_b <- 1-csim_b 
+# Calc Hellinger Dist (x = mymat)
+# dist.mtx=CalcHellingerDist(as.matrix(dtm))
+#Canonical Groupings of the Bible
+Testaments=c(rep('OT',39),rep('NT',27))
+Sections=c(rep('Law',5), rep('History',12),rep('Wisdom',5),rep('Prophets',17),
+rep('Gospels',5),rep('Paul',13),rep("Apostles",9))
+```
+
+#**Dendrograms**
+
+Dendrogram for the 2 Testaments on the text f the 66 books & Dendrogram for the 7 levels of Sections in the Bible
+
+```{r}
+#Dendrogram for the 2 Testaments on the text f the 66 books
+# Using the term raw frequency counts with dendrograms using wald linkage
+hc.wald=hclust(as.dist(dist.mtx_b),'ward.D2')
+dend=as.dendrogram(hc.wald)
+#Coloring the leaves according to 'Testaments'
+labels_colors(dend)<-as.numeric(as.factor(Testaments[hc.wald$order]))
+#Change labels font size
+dend<-set(dend,"labels_cex",1.0)
+par(mar=c(4,1,1,12))
+plot(dend,horiz = TRUE,main='Dend of 2 Testaments based on Words Counts-WALD')
+legend("topleft", cex=0.45, legend = unique(Testaments), fill = as.numeric(as.factor(unique(Testaments))))
+
+#MDS Plot
+fit<-cmdscale(as.dist(dist.mtx_b),k=2)
+#Two Testaments
+plot(fit[,2]~fit[,1],type='n')
+text(x = fit[,1], y = fit[,2], labels = row.names(fit), col=unclass(as.factor(Testaments)), cex=.95, font=2)
+mtext( cex = 1, text = "Two Testaments of the Bible based on Words Counts", line=2,outer=FALSE)
+
+#Dendrogram for the 7 levels of Sections in the Bible
+hc.wald=hclust(as.dist(dist.mtx_b),'ward.D2')
+dend=as.dendrogram(hc.wald)
+#Coloring the leaves according to 'Sections'
+labels_colors(dend)<-as.numeric(as.factor(Sections[hc.wald$order]))
+#Change labels font size
+dend<-set(dend,"labels_cex",1.0)
+par(mar=c(4,1,1,12))
+plot(dend,horiz = TRUE,main='Dend of 7 Sections based on Words Counts-WALD')
+legend("topleft", cex=0.45, legend = unique(Sections), fill = as.numeric(as.factor(unique(Sections))))
+
+#MDS Plot
+fit<-cmdscale(as.dist(dist.mtx_b),k=2)
+#Seven Sections
+plot(fit[,2]~fit[,1],type='n')
+text(x = fit[,1], y = fit[,2], labels = row.names(fit), col=unclass(as.factor(Sections)), cex=.95, font=2)
+mtext( cex = 1, text = "Seven Sections of the Bible based on Words Counts", line=2,outer=FALSE)
+```
+
+For Testaments - Both the Dendrogram and the MSD plot shows that the resulting 2 clusters match the 2 Testaments pretty well
+For Sections - Both the Dendrogram and the MSD plot shows that the resulting 7 clusters match the 7 Sections well. Here its better to find some misclassifications.
+
+#**PRINCIPLE COMPONENT ANALYSIS 
+
+```{r}
+#Transforming the dtm into a matrix
+m_b<-as.matrix(dtm_b)
+dtm_b.pca=prcomp(m_b) #did not scale the data
+#Here the rotations measure provides the principal component loadings.
+#Each column of the rotation matrix contains the principal component loading vector 
+dtm_b.pca$rotation[1:5,1:5] #Showing firt 5 PC and first 5 rows 
+dim(dtm_b.pca$x)
+#Standard deviation of each principal component
+dtm_b.sd=dtm_b.pca$sdev
+dtm_b.var=dtm_b.pca$sdev^2 #To compute variance
+dtm_b.var[1:5]
+#Proportion of Variance explained 
+pve=dtm_b.var/sum(dtm_b.var) ; cumsum(pve[1:10])
+#Plotting the principal components with proportion of variance explained 
+#plot(dtm_b.pca,type="lines")
+fviz_screeplot(dtm_b.pca,np=10,choice="eigenvalue")
+plot(cumsum(pve),xlab="Principal Components", ylab="Cumulative proportion of Var Explained", ylim=c(0,1),type='b')
+which.max(cumsum(pve)[cumsum(pve)<0.90])
+#From this we can see that within 12 PC we can cover almost 90% of the variance of the data 
+dtm_bnew=as.data.frame(dtm_b.pca$x[,1:12])
+dtm_bnew1=dtm_b.pca$x[,1:12]
+```
+
+Therefore the first 12 PC were chosn as the new variables 
+
+#**K-Means Clustering**
+
+```{r}
+# Performing K-means clustering with k=2
+set.seed(2)
+km_2.fit=kmeans(dtm_bnew,2,nstart=50)
+attributes(km_2.fit)
+# Both the Testaments "OT" and "NT" is labeled as '1' & '2'
+y_k2=table(km_2.fit$cluster, bible_bt$Testaments) ; y_k2
+#Accuracy
+mean(km_2.fit$cluster==bible_bt$Testaments)
+#Misclassification rate
+misrate_k2<-1-sum(diag(y_k2))/sum(y_k2) ; misrate_k2
+#Centroid plot with against 1st and 2nd discriminant functions 
+plotcluster(dtm_bnew,km_2.fit$cluster)
+
+# Performing K-means clustering with k=7
+set.seed(4)
+km_7.fit=kmeans(dtm_bnew,7,nstart = 50)
+attributes(km_7.fit)
+#7 Sections('Apostles'-'1', 'Gospels'-'2',  'History'-'3', 'Law'-'4', 'Paul'-'5','Prophets'-'6','Wisdom'-'7') were labeled 
+y_k7=table(km_7.fit$cluster,bible_bs$Sections) ; y_k7
+mean(km_7.fit$cluster == bible_bs$Sections)
+misrate_k7<-1-sum(diag(y_k7))/sum(y_k7)  ; misrate_k7
+# Centroid Plot against 1st 2 discriminant functions
+plotcluster(dtm_bnew, km_7.fit$cluster)
+```
+
+The K-means clustering we can see that the missclassification rate on the 2 testaments and 7 sections are high. But this problem can also be due to the set.seed . When i change the set.seed the missclassification is getting decreased for k=2 but not decreasing with k=7
+
+#**HIERARCHIAL CLUSTERING AFTER PCA**
+
+```{r}
+par(mfrow=c(1,2))
+## Hierarchical Clustering for  k=2 testaments
+hc.ward=hclust(dist(dtm_bnew, method = "euclidean"), method="ward.D2")
+#dendrogram
+plot(hc.ward,main="Complete Linkage", xlab="", sub="", cex=.9)
+# draw dendogram with red borders around the 2 clusters
+rect.hclust(hc.ward,k=2,border="red")
+groups2=cutree(hc.ward,2)# cut tree into 5 clusters
+#Accuracy and misclassification rate
+y_h2<-table(groups2,bible_bt$Testaments) ;y_h2
+mean(groups2 ==bible_bt$Testaments)
+misrate_h2<-1-sum(diag(y_h2))/sum(y_h2) ; misrate_h2
+# 2D representation of the Segmentation:
+clusplot(dtm_bnew, groups2, color=TRUE, shade=TRUE,
+         labels=2, lines=0, main= 'Group segments')
+# Centroid Plot against 1st 2 discriminant functions
+plotcluster(dtm_bnew, groups2)
+
+## Hierarchical Clustering for  k=7 sections
+#dendrogram
+plot(hc.ward,main="Complete Linkage", xlab="", sub="", cex=.9)
+# draw dendogram with red borders around the 2 clusters
+rect.hclust(hc.ward,k=7,border="red")
+groups7=cutree(hc.ward,7)# cut tree into 5 clusters
+#Accuracy and misclassification rate
+y_h7<-table(groups7,bible_bs$Sections) ;y_h7
+mean(groups7 ==bible_bs$Sections)
+misrate_h7<-1-sum(diag(y_h7))/sum(y_h7)  ; misrate_h7
+# 2D representation of the Segmentation:
+clusplot(dtm_bnew, groups7, color=TRUE, shade=TRUE,
+         labels=2, lines=0, main= 'Group segments')
+# Centroid Plot against 1st 2 discriminant functions
+plotcluster(dtm_bnew, groups7)
+```
+
+After Hierarchial clustering on the data of the PCA , missclassifiaction rate on the both 2 Testaments and 7 Sections are more high like K-means clustering
+
+#**FUZZY CLUSTERING**
+
+```{r}
+par(mfrow=c(1,2))
+#k=2 testaments
+fuz2 <- cmeans(dtm_bnew, 2, 100, m=2, method="cmeans")
+# 2D representation of the Segmentation:
+clusplot(dtm_bnew, fuz2$cluster, color=TRUE, shade=TRUE,
+         labels=2, lines=0, main= 'Fuzzy clustering Group segments')
+# Centroid Plot against 1st 2 discriminant functions
+plotcluster(dtm_bnew, fuz2$cluster)
+#Accuracy and misclassification rate
+y_f2<-table(fuz2$cluster,bible_bt$Testaments) ; y_f2
+mean(fuz2$cluster ==bible_bt$Testaments)
+misrate_f2<-1-sum(diag(y_f2))/sum(y_f2) ; misrate_f2
+
+#k=7 sections
+fuz7 <- cmeans(dtm_bnew, 7, 100, m=2, method="cmeans")
+# 2D representation of the Segmentation:
+clusplot(dtm_bnew, fuz7$cluster, color=TRUE, shade=TRUE,
+         labels=2, lines=0, main= 'Fuzzy clustering Group segments')
+# Centroid Plot against 1st 2 discriminant functions
+plotcluster(dtm_bnew, fuz7$cluster)
+#Accuracy and misclassification rate
+y_f7<-table(fuz7$cluster,bible_bs$Sections) ;y_f7
+mean(fuz7$cluster ==bible_bs$Sections)
+misrate_f7<-1-sum(diag(y_f7))/sum(y_f7) ; misrate_f7
+```
+
+The missclassification rate on the 2 Testaments and 7 Sections are high after doing Fuzzy Clustering. 
+
+#**NB-CLUST** 
+NbClust proposes that 2 is the best clustering method for this new dataset
+
+```{r}
+par(mfrow=c(2,2))
+fviz_nbclust(dtm_bnew1,kmeans,method="wss") # Using elbow method - wss
+fviz_nbclust(dtm_bnew1,kmeans,method="silhouette") #Using silhouette method
+fviz_nbclust(dtm_bnew1,kmeans,method="gap_stat") #Using gap_stat method
+mito.nbclust<-dtm_bnew1 %>% #Using NbClust
+  scale() %>%
+  NbClust(distance="euclidean",min.nc=2,max.nc=8,method="complete",index="all")
+```
+
+#**MODEL BASED CLUSTERING (MDS)**
+
+```{r}
+par(mfrow=c(1,2))
+mb.fit <- Mclust(dtm_bnew)
+summary(mb.fit) # display the best model
+mb.fit$modelName # Optimal selected model ==> "VVV"
+mb.fit$G  # Optimal number of cluster => 6
+# BIC values used for choosing the number of clusters
+fviz_mclust(mb.fit, "BIC", palette = "jco")
+# Classification: plot showing the clustering
+fviz_mclust(mb.fit, "classification", geom = "point", pointsize = 1.5, palette = "jco")
+# Classification uncertainty
+fviz_mclust(mb.fit, "uncertainty", palette = "jco")
+```
+
+Results from Model based clustering shows that the optimal number of clusters is 6 and not 2 or 7 which we found from the kmeans, fuzzy, hirachal and nbclust
+
+#**DENSITY BASED CLUSTERING**
+
+```{r}
+par(mfrow=c(1,2)) ;set.seed(123)
+# determining the optimal eps value
+dbscan::kNNdistplot(dtm_bnew, k =  3)
+abline(h = 200, lty = 2,col="red")
+dbm <- fpc::dbscan(dtm_bnew, eps = 200,  MinPts = 5) ;dbm
+#Display the hull plot
+hullplot(dtm_bnew, dbm$cluster)
+```
+
+#**MISSCLASSIFICATON RATE OF THE TESTAMENTS AND THE SECTIONS**
+
+```{r}
+# missclassification rate on 2 Testaments
+cv_error_rate2 <- rbind(misrate_k2,misrate_h2,misrate_f2)
+rownames(cv_error_rate2) <- (c('Kmeans Clustering','Hierarchical Clustering','Fuzzy Clustering'))
+colnames(cv_error_rate2) <- 'cv_error_rate2' ; round(cv_error_rate2, 4)
+# missclassification rate on 7 Sections
+cv_error_rate7 <- rbind(misrate_k7,misrate_h7, misrate_f7)
+rownames(cv_error_rate7) <- (c('Kmeans Clustering', 'Hierarchical Clustering','Fuzzy Clustering'))
+colnames(cv_error_rate7) <- 'cv_error_rate' ; round(cv_error_rate7, 4)
+```
+
+#**Clustering Groups to tabulate the groups of clusters** 
+
+```{r}
+bible.group_sections<-data.frame(dtm_bnew,km_7.fit$cluster)
+bible.group_testaments<-data.frame(dtm_bnew,km_2.fit$cluster)
+```
+
+#**Analyzing Word Frequencies** 
+Analysis of word frequencies based on using library package corpus with removing stopwords, stemdocument,numbers, punctuations and finding for the BOOKS
+
+```{r}
+#ANALYSIS OF WORD FREQUENCIES FOR 7 SECTIONS 
+corpus1<-Corpus(VectorSource(bible_st$text))
+text_corpus1 <- tm_map(corpus1,removeWords,my_stopwords1)
+text_corpus1 <- tm_map(corpus1,removeWords,my_stopwords2)
+text_corpus1 <- tm_map(corpus1, stripWhitespace)
+text_corpus1 <- tm_map(corpus1, content_transformer(tolower))
+text_corpus1 <- tm_map(corpus1, removeWords, stopwords("english"))
+text_corpus1 <- tm_map(corpus1, stemDocument)
+text_corpus1 <- tm_map(corpus1, removeNumbers)
+text_corpus1 <- tm_map(corpus1, removePunctuation)
+dtm_b2<-DocumentTermMatrix(text_corpus1); dim(dtm_b2)
+dtm_b221<-removeSparseTerms(dtm_b2,sparse=0.95); dim(dtm_b221)
+dtmr1 <-DocumentTermMatrix(text_corpus1, control=list(wordLengths=c(2, 20), bounds = list(global = c(2,45)))) ;dim(dtmr1)
+freq<-sort(colSums(as.matrix(dtmr1)),decreasing = TRUE); head(freq,10)
+wf1<-data.frame(word=names(freq),freq=freq); head(wf1) ; head(wf1,10)
+#p1<-ggplot(subset(wf,freq>40),aes(x=reorder(word,freq1),y=freq1))+geom_bar(stat="identity")+
+        #    theme(axis.text.x=element_text(angle=45,hjust=1)) #p1
+set.seed(142)
+wordcloud(names(freq),freq,min.freq=40,max.words = 100,random.order = FALSE,rot.per = .1,
+          random.color=TRUE)
+wordcloud(names(freq),freq,min.freq=40,max.words = 100,random.order = FALSE,rot.per = .35,
+          colors=brewer.pal(8,"Dark2"))
+
+#ANALYSIS OF WORD FREQUENCIES FOR 66 BOOKS
+corpus<-Corpus(VectorSource(bible_books$text))
+text_corpus <- tm_map(corpus,removeWords,my_stopwords1)
+text_corpus <- tm_map(corpus,removeWords,my_stopwords2)
+text_corpus <- tm_map(corpus, stripWhitespace)
+text_corpus <- tm_map(corpus, content_transformer(tolower))
+text_corpus <- tm_map(corpus, removeWords, stopwords("english"))
+text_corpus <- tm_map(corpus, stemDocument)
+text_corpus <- tm_map(corpus, removeNumbers)
+text_corpus <- tm_map(corpus, removePunctuation)
+dtm_b2<-DocumentTermMatrix(text_corpus) ;dim(dtm_b2)
+dtm_b22<-removeSparseTerms(dtm_b2,sparse=0.95) ; dim(dtm_b22); 
+dtmr <-DocumentTermMatrix(text_corpus, control=list(wordLengths=c(4, 20), bounds = list(global = c(5,45))))
+dim(dtmr) ; 
+freq<-sort(colSums(as.matrix(dtmr)),decreasing = TRUE); head(freq,20)
+wf<-data.frame(word=names(freq),freq=freq); head(wf) ; head(wf,10)
+p<-ggplot(subset(wf,freq>200),aes(x=reorder(word,freq),y=freq))+geom_bar(stat="identity")+
+            theme(axis.text.x=element_text(angle=45,hjust=1)) 
+p ; set.seed(142)
+wordcloud(names(freq),freq,min.freq=200,max.words = 100,random.order = FALSE,rot.per = .1,
+          random.color=TRUE)
+wordcloud(names(freq),freq,min.freq=200,max.words = 100,random.order = FALSE,rot.per = .35,
+          colors=brewer.pal(8,"Dark2"))
+
+#ANALYSIS OF WORD FREQUENCIES FOR 2 TESTAMENTS 
+corpus<-Corpus(VectorSource(bible_tt$text))
+text_corpus <- tm_map(corpus,removeWords,my_stopwords1)
+text_corpus <- tm_map(corpus,removeWords,my_stopwords2)
+text_corpus <- tm_map(corpus, stripWhitespace)
+text_corpus <- tm_map(corpus, content_transformer(tolower))
+text_corpus <- tm_map(corpus, removeWords, stopwords("english"))
+text_corpus <- tm_map(corpus, stemDocument)
+text_corpus <- tm_map(corpus, removeNumbers)
+text_corpus <- tm_map(corpus, removePunctuation)
+dtm_b2<-DocumentTermMatrix(text_corpus);dim(dtm_b2)
+dtm_b22<-removeSparseTerms(dtm_b2,sparse=0.95);dim(dtm_b22)
+dtmr <-DocumentTermMatrix(text_corpus, control=list(wordLengths=c(2, 20), bounds = list(global = c(2,45))));dim(dtmr)
+freq<-sort(colSums(as.matrix(dtmr)),decreasing = TRUE); head(freq,25)
+wf<-data.frame(word=names(freq),freq=freq); head(wf); head(wf,100)
+p<-ggplot(subset(wf,freq>200),aes(x=reorder(word,freq),y=freq))+geom_bar(stat="identity")+
+            theme(axis.text.x=element_text(angle=45,hjust=1)) 
+p ; set.seed(142)
+#wordcloud(names(freq),freq,min.freq=5,max.words = 10,random.order = FALSE,rot.per = .1,
+         # random.color=TRUE)
+#wordcloud(names(freq),freq,min.freq=44,max.words = 100,random.order = FALSE,rot.per = .35,
+         # colors=brewer.pal(8,"Dark2"))
+
+#ANALYSIS ON WORD FREQUENCY ON THE WHOLE DATASET 
+freq<-sort(colSums(as.matrix(dtm_b2)),decreasing = TRUE); head(freq,15)
+
+wf<-data.frame(word=names(freq),freq=freq); head(wf)
+head(wf,100)
+p<-ggplot(subset(wf,freq>1000),aes(x=reorder(word,freq),y=freq))+geom_bar(stat="identity")+
+            theme(axis.text.x=element_text(angle=45,hjust=1)) 
+p
+set.seed(142)
+#wordcloud(names(freq),freq,min.freq=866,max.words = 100,random.order = FALSE,rot.per = .1,
+ #         random.color=TRUE)
+wordcloud(names(freq),freq,min.freq=866,max.words = 100,random.order = FALSE,rot.per = .35,
+          colors=brewer.pal(8,"Dark2"))
+
+#Analysis of the bible_book dataset 
+corpus<-Corpus(VectorSource(bible_books$text))
+text_corpus <- tm_map(corpus,removeWords,my_stopwords1)
+text_corpus <- tm_map(corpus,removeWords,my_stopwords2)
+text_corpus <- tm_map(corpus, stripWhitespace)
+text_corpus <- tm_map(corpus, content_transformer(tolower))
+text_corpus <- tm_map(corpus, removeWords, stopwords("english"))
+text_corpus <- tm_map(corpus, stemDocument)
+text_corpus <- tm_map(corpus, removeNumbers)
+text_corpus <- tm_map(corpus, removePunctuation)
+dtm_b2<-DocumentTermMatrix(text_corpus);dim(dtm_b2)
+dtm_b22<-removeSparseTerms(dtm_b2,sparse=0.95);dim(dtm_b22)
+dtmr <-DocumentTermMatrix(text_corpus, control=list(wordLengths=c(2, 20), bounds = list(global = c(2,45))));dim(dtmr)
+freq<-sort(colSums(as.matrix(dtmr)),decreasing = TRUE); head(freq,15)
+wf<-data.frame(word=names(freq),freq=freq); head(wf); head(wf,10)
+p<-ggplot(subset(wf,freq>200),aes(x=reorder(word,freq),y=freq))+geom_bar(stat="identity")+
+            theme(axis.text.x=element_text(angle=45,hjust=1)) 
+p ; set.seed(142)
+wordcloud(names(freq),freq,min.freq=200,max.words = 100,random.order = FALSE,rot.per = .1,
+          random.color=TRUE)
+wordcloud(names(freq),freq,min.freq=200,max.words = 100,random.order = FALSE,rot.per = .35,
+          colors=brewer.pal(8,"Dark2"))
+```
+
+
+#**ASSOSICATION RULES**
+The association rule works good for the books with the rules
+
+```{r}
+bible_dis<-discretizeDF(bible)
+rules_bible<-apriori(bible_dis)
+summary(rules_bible)
+subrules_bible<-rules_bible[quality(rules_bible)$confidence>0.5]
+subrules_bible
+plot(subrules_bible,method="matrix",measure = "lift")
+subrules_bible2<-head(sort(rules_bible,by="lift"),66)
+plot(subrules_bible2,method = "graph")
+plot(subrules_bible2, method="paracoord")
+#sel <- plot(rules_bible, measure=c("support", "lift"), shading="confidence", interactive=TRUE)
+plot(rules_bible, method="graph")
+```
+
+#**SERATION ANALYSIS** 
+This is the seration analysis for 66 books and ordering according to the seriation analysis 
+
+```{r}
+x<-as.matrix(csim_b)
+x<-x[sample(seq_len(nrow(x))),]
+d<-dist(x)
+o<-seriate(d,method="OLO")
+pimage(d,main="Original")
+pimage(d,o,main="Reordered")
+get_order(o)
+
+x1<-as.matrix(dtm_b)
+x1<-x1[sample(seq_len(nrow(x1))),]
+d1<-dist(x1)
+o1<-seriate(d1,method="OLO")
+pimage(d1,main="Original")
+pimage(d1,o1,main="Reordered")
+get_order(o1)
+```
+
+
